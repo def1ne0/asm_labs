@@ -18,36 +18,29 @@ _Temp_H equ $03
  fcb kV3
 
  org $8000
-
  clra
  clrb 
  clr _Mid
  clr _High
-
- ldaa $8100 ; let V1 = 0xFF
- ldab $8101 ; let V2 = 0xFF
- mul ; D = V1 * V2 = [11111110][00000001]
-
- staa _Temp_H ; store temporary high byte (=11111110)
- stab _Low ; store low byte (=00000001)
-
- ldaa _Temp_H ; 
+ ldaa $8100
+ ldab $8101
+ mul
+ staa _Temp_H
+ stab _Low
+ ldaa _Temp_H 
  ldab $8102 
- mul ; D = [11111110] * V3 = [11111101][00000010] 
-
- staa _High ; (=11111101)
- stab _Mid ; (=00000010)
-
+ mul 
+ staa _High
+ stab _Mid 
  ldaa _Low 
  ldab $8102
- mul ; D = [00000001] * V3 = [00000000][11111111]
-
- stab _Low ; (=11111111)
- adda _Mid ; _Mid = [00000000] + _Mid = [00000000] + [00000010] = [00000010]
+ mul
+ stab _Low
+ adda _Mid
  staa _Mid 
  bcc Done
- inc _High ; carry flag not triggered
-
- ; So, res = [11111101][00000010][11111111] = 255 * 255 * 255 = 16_581_375
+ inc _High
 Done:
  bra * 
+
+
