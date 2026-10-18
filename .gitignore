@@ -1,0 +1,8 @@
+**/bin/**
+**/tasm/**
+*.OBJ
+*.o
+*.bin
+*.MAP
+*.EXE
+*.COM
