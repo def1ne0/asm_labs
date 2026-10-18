@@ -3,200 +3,146 @@
 
 .data
     BUF_SIZE EQU 200
-    NEWLINE        db 0Ah, 0Dh, '$'
-
+    NEWLINE        db 0Dh, 0Ah, '$'
     S_INPUT_FULL   db "Input full string: $"
     S_INPUT_TARGET db "Input target string: $"
     S_RES          db "Result: $"
     S_ERR          db "[ERR] Target not found or there's no word before it $"
-
     buf_full       db BUF_SIZE, 0, BUF_SIZE dup(' ')
     buf_target     db BUF_SIZE, 0, BUF_SIZE dup(' ')
+    full_len       dw 0
+    tgt_len        dw 0
 
 .code
 _start:
     mov ax, @data
     mov ds, ax
-    mov es, ax              ; ВАЖНО: ES должен быть равен DS для строковых операций
+    mov es, ax
+    cld
 
-    ; --- Ввод исходной строки ---
+    ; --- ввод исходной строки ---
     mov ah, 09h
     lea dx, S_INPUT_FULL
     int 21h
-
     mov ah, 0Ah
     lea dx, buf_full
     int 21h
-
+    xor bx, bx
     mov bl, buf_full[1]
-    mov bh, 0
-    mov byte ptr [buf_full + 2 + bx], '$'
-
+    mov full_len, bx
     mov ah, 09h
     lea dx, NEWLINE
     int 21h
 
-    ; --- Ввод искомого слова ---
+    ; --- ввод искомого слова ---
     mov ah, 09h
     lea dx, S_INPUT_TARGET
     int 21h
-
     mov ah, 0Ah
     lea dx, buf_target
     int 21h
-
+    xor bx, bx
     mov bl, buf_target[1]
-    mov bh, 0
-    mov byte ptr [buf_target + 2 + bx], '$'
-
+    mov tgt_len, bx
     mov ah, 09h
     lea dx, NEWLINE
     int 21h
 
-    ; --- Проверка на пустоту ---
-    mov bl, buf_target[1]
-    cmp bl, 0
-    je _not_found
-
-    mov bh, buf_full[1]
-    cmp bh, bl
-    jl _not_found
-
-    ; --- Цикл поиска ---
-    mov cl, bh
-    mov ch, 0               ; Замена movzx cx, bh
-    sub cl, bl
-    inc cx
-    mov si, 2
+    ; --- проверки ---
+    mov bx, tgt_len
+    cmp bx, 0
+    jne _c1
+    jmp _not_found
+_c1:
+    mov ax, full_len
+    cmp ax, bx
+    jge _c2
+    jmp _not_found
+_c2:
+    sub ax, bx
+    inc ax                  ; AX = число стартовых позиций
+    mov cx, ax              ; внешний счётчик
+    mov si, offset buf_full + 2     ; ТОЛЬКО абсолютный адрес
 
 _search_loop:
     push si
     push cx
-    mov cx, bx
-    mov di, offset buf_target + 2  ; ВАЖНО: Указываем DI, с чем сравнивать
+    mov cx, tgt_len
+    mov di, offset buf_target + 2
     repe cmpsb
     pop cx
     pop si
-    je _check_boundaries
-
+    je _bounds
 _no_match:
     inc si
     loop _search_loop
     jmp _not_found
 
-_check_boundaries:
-    ; Проверка левой границы
-    cmp si, 2
-    je _check_right_boundary
-    mov al, [si - 1]
-    cmp al, ' '
+_bounds:                    ; SI = адрес найденного вхождения
+    cmp si, offset buf_full + 2
+    je _bound_right
+    cmp byte ptr [si - 1], ' '
     jne _no_match
-
-_check_right_boundary:
-    ; Проверка правой границы
+_bound_right:
     mov ax, si
-    add ax, bx              ; ИСПРАВЛЕНО: было 'mov ax, bx', что затирало si
-    mov dx, offset buf_full + 2
-    mov bl, buf_full[1]
-    mov bh, 0
-    add dx, bx
-    cmp ax, dx
-    je _match_confirmed
-
-    mov al, [si + bx]
+    add ax, tgt_len                 ; адрес сразу после слова
+    mov bx, offset buf_full + 2
+    add bx, full_len                ; адрес CR = конец строки
+    cmp ax, bx
+    je _match
+    mov di, ax
+    mov al, [di]
     cmp al, ' '
-    je _match_confirmed
-    cmp al, 13
-    je _match_confirmed
-    cmp al, 10
-    je _match_confirmed
+    je _match
+    cmp al, 0Dh
+    je _match
     jmp _no_match
 
-_match_confirmed:
-    push bx                 ; СОХРАНЯЕМ длину искомого слова, т.к. BX будет испорчен ниже
-
-    mov bp, si
-    sub bp, offset buf_full + 2
-    dec bp
-
-_skip_spaces_back:
-    cmp bp, 0
-    jl _no_prev_word_pop
-    mov al, buf_full[bp + 2]
-    cmp al, ' '
-    je _is_space_prev
-    jmp _found_end_prev
-
-_is_space_prev:
-    dec bp
-    jmp _skip_spaces_back
-
-_found_end_prev:
-    mov dx, bp
-
-_find_start_prev:
+_match:                     ; BX = адрес искомого слова (храним!)
+    mov bx, si
+    mov di, si
+    dec di                          ; символ перед словом
+_back_spaces:
+    cmp di, offset buf_full + 2
+    jb _no_prev                     ; слово первое в строке
+    cmp byte ptr [di], ' '
+    jne _prev_end
+    dec di
+    jmp _back_spaces
+_prev_end:                  ; DI = последний символ пред. слова
+    mov si, di
+_prev_start:
+    cmp si, offset buf_full + 2
+    je _have_del                    ; пред. слово с начала буфера
+    cmp byte ptr [si - 1], ' '
+    je _have_del
+    dec si
+    jmp _prev_start
+_have_del:                  ; SI = начало удаляемого, BX = начало искомого
+    mov dx, bx
+    sub dx, si                      ; DX = длина удаляемого (>=1)
     cmp dx, 0
-    jl _start_found_prev
-    mov bx, dx              ; Здесь BX перезаписывается, поэтому мы сохранили его в стек выше
-    mov al, buf_full[bx + 2]
-    cmp al, ' '
-    je _start_found_prev
-    dec dx
-    jmp _find_start_prev
-
-_start_found_prev:
-    mov ax, si
-    sub ax, offset buf_full + 2
+    jle _no_prev
+    mov di, si                      ; приёмник
+    mov si, bx                      ; источник = начало искомого слова
+    mov ax, offset buf_full + 2
+    add ax, full_len
+    sub ax, bx                      ; AX = длина хвоста
+    cmp ax, 0
+    je _upd
     mov cx, ax
-    sub cx, dx
-    dec cx                  ; CX = длина удаляемого фрагмента
-
-    cmp cx, 0
-    jle _no_prev_word_pop
-
-    pop bx                  ; ВОССТАНАВЛИВАЕМ длину искомого слова
-
-    ; Настраиваем SI (источник) и DI (приемник) для сдвига
-    mov si, offset buf_full + 2
-    add si, ax
-    add si, bx
-
-    mov di, offset buf_full + 2
-    add di, dx
-    inc di
-
-    ; Считаем длину "хвоста", который нужно сдвинуть
-    mov dl, buf_full[1]
-    mov dh, 0
-    sub dx, ax
-    sub dx, bx              ; DX = длина хвоста
-
-    cmp dx, 0
-    jle _do_update_length
-
-    push cx                 ; Сохраняем длину удаляемого фрагмента
-    mov cx, dx              ; CX = длина хвоста для rep movsb
-    cld
     rep movsb
-    pop cx                  ; Восстанавливаем длину удаляемого фрагмента
-
-_do_update_length:
-    ; Обновляем фактическую длину строки
-    mov bl, buf_full[1]
-    mov bh, 0
-    sub bx, cx
-    mov buf_full[1], bl
-
-    ; Ставим '$' в новый конец строки
+_upd:
+    mov ax, full_len
+    sub ax, dx                      ; новая длина
+    mov full_len, ax
+    mov byte ptr buf_full[1], al
     mov di, offset buf_full + 2
-    add di, bx
-    mov byte ptr [di], '$'
-
+    add di, ax
+    mov byte ptr [di], '$'          ; терминатор для вывода
     jmp _print_result
 
-_no_prev_word_pop:
-    pop bx                  ; Балансируем стек, если перешли по ошибке
-_no_prev_word:
+_no_prev:
 _not_found:
     mov ah, 09h
     lea dx, S_ERR
@@ -207,11 +153,9 @@ _print_result:
     mov ah, 09h
     lea dx, S_RES
     int 21h
-
     mov ah, 09h
     lea dx, NEWLINE
     int 21h
-
     mov ah, 09h
     lea dx, buf_full + 2
     int 21h
